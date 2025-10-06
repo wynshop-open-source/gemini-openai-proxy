@@ -49,11 +49,10 @@ func (g *GeminiAdapter) GenerateContent(
 		return nil, errors.Wrap(err, "genai create chat error")
 	}
 
-	parts := []genai.Part{}
-	if len(messages) > 0 {
-		for _, p := range messages[len(messages)-1].Parts {
-			parts = append(parts, *p)
-		}
+	lastMessageParts := messages[len(messages)-1].Parts
+	parts := make([]genai.Part, len(lastMessageParts))
+	for i, p := range lastMessageParts {
+		parts[i] = *p
 	}
 	genaiResp, err := chat.SendMessage(ctx, parts...)
 	if err != nil {
@@ -88,11 +87,10 @@ func (g *GeminiAdapter) GenerateStreamContent(
 		return nil, errors.Wrap(err, "genai create chat error")
 	}
 
-	parts := []genai.Part{}
-	if len(messages) > 0 {
-		for _, p := range messages[len(messages)-1].Parts {
-			parts = append(parts, *p)
-		}
+	lastMessageParts := messages[len(messages)-1].Parts
+	parts := make([]genai.Part, len(lastMessageParts))
+	for i, p := range lastMessageParts {
+		parts[i] = *p
 	}
 	it := chat.SendMessageStream(ctx, parts...)
 
