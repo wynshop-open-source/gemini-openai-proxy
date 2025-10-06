@@ -359,7 +359,7 @@ func genaiResponseToStreamCompletionResponse(
 				}
 
 				resp.Choices = append(resp.Choices, choice)
-			} else if part.FunctionCall == nil {
+			} else if part.FunctionCall != nil {
 				args, _ := json.Marshal(part.FunctionCall.Args)
 				toolCalls = append(toolCalls, openai.ToolCall{
 					Index:    genai.Ptr(int(index)),
