@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/generative-ai-go/genai"
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai"
+	"google.golang.org/genai"
 )
 
 // convertOpenAIToolsToGenAI converts OpenAI tools to Gemini tools

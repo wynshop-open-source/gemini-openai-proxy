@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/google/generative-ai-go/genai"
 	"github.com/pkg/errors"
 	openai "github.com/sashabaranov/go-openai"
+	"google.golang.org/genai"
 )
 
 type ChatCompletionMessage struct {
@@ -66,7 +66,7 @@ func (req *ChatCompletionRequest) toVisionGenaiContent() ([]*genai.Content, erro
 			}
 		}
 
-		prompt := make([]genai.Part, 0, len(parts))
+		prompt := make([]*genai.Part, 0, len(parts))
 		for _, part := range parts {
 			switch part.Type {
 			case openai.ChatMessagePartTypeText:
@@ -77,12 +77,9 @@ func (req *ChatCompletionRequest) toVisionGenaiContent() ([]*genai.Content, erro
 						functionName = functionName[:lastDashIndex]
 					}
 
-					prompt = append(prompt, genai.FunctionResponse{
-						Name:     functionName,
-						Response: map[string]any{"result": part.Text},
-					})
+					prompt = append(prompt, genai.NewPartFromFunctionResponse(functionName, map[string]any{"result": part.Text}))
 				} else {
-					prompt = append(prompt, genai.Text(part.Text))
+					prompt = append(prompt, genai.NewPartFromText(part.Text))
 				}
 
 			case openai.ChatMessagePartTypeImageURL:
@@ -91,7 +88,7 @@ func (req *ChatCompletionRequest) toVisionGenaiContent() ([]*genai.Content, erro
 					return nil, errors.Wrap(err, "parse image url error")
 				}
 
-				prompt = append(prompt, genai.ImageData(format, data))
+				prompt = append(prompt, genai.NewPartFromBytes(data, format))
 			}
 		}
 
@@ -101,10 +98,7 @@ func (req *ChatCompletionRequest) toVisionGenaiContent() ([]*genai.Content, erro
 				return nil, errors.Wrap(err, "failed to unmarshal message function args")
 			}
 
-			prompt = append(prompt, genai.FunctionCall{
-				Name: tool.Function.Name,
-				Args: args,
-			})
+			prompt = append(prompt, genai.NewPartFromFunctionCall(tool.Function.Name, args))
 		}
 
 		switch message.Role {
@@ -115,8 +109,8 @@ func (req *ChatCompletionRequest) toVisionGenaiContent() ([]*genai.Content, erro
 					Role:  genaiRoleUser,
 				},
 				{
-					Parts: []genai.Part{
-						genai.Text(" "),
+					Parts: []*genai.Part{
+						genai.NewPartFromText(" "),
 					},
 					Role: genaiRoleModel,
 				},
@@ -191,8 +185,8 @@ func (req *EmbeddingRequest) ToGenaiMessages() ([]*genai.Content, error) {
 
 	content := make([]*genai.Content, 0, len(req.Messages))
 	for _, message := range req.Messages {
-		embedString := []genai.Part{
-			genai.Text(message),
+		embedString := []*genai.Part{
+			genai.NewPartFromText(message),
 		}
 		content = append(content, &genai.Content{
 			Parts: embedString,

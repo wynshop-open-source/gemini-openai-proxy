@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/genai"
+	"iter"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/google/generative-ai-go/genai"
 	"github.com/pkg/errors"
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/api/iterator"
 
 	"github.com/zhu327/gemini-openai-proxy/pkg/util"
 )
@@ -40,18 +40,22 @@ func (g *GeminiAdapter) GenerateContent(
 	req *ChatCompletionRequest,
 	messages []*genai.Content,
 ) (*openai.ChatCompletionResponse, error) {
-	// Add 'models/' prefix if not already present
-	modelName := g.model
-	if !strings.HasPrefix(modelName, "models/") {
-		modelName = "models/" + modelName
+	// Remove 'models/' prefix if present
+	modelName := strings.TrimPrefix(g.model, "models/")
+
+	conf := getGenaiContentConfigByOpenaiRequest(req)
+	chat, err := g.client.Chats.Create(ctx, modelName, &conf, messages)
+	if err != nil {
+		return nil, errors.Wrap(err, "genai create chat error")
 	}
-	model := g.client.GenerativeModel(modelName)
-	setGenaiModelByOpenaiRequest(model, req)
 
-	cs := model.StartChat()
-	setGenaiChatHistory(cs, messages)
-
-	genaiResp, err := cs.SendMessage(ctx, messages[len(messages)-1].Parts...)
+	parts := []genai.Part{}
+	if len(messages) > 0 {
+		for _, p := range messages[len(messages)-1].Parts {
+			parts = append(parts, *p)
+		}
+	}
+	genaiResp, err := chat.SendMessage(ctx, parts...)
 	if err != nil {
 		var apiErr *googleapi.Error
 		if errors.As(err, &apiErr) {
@@ -75,25 +79,30 @@ func (g *GeminiAdapter) GenerateStreamContent(
 	req *ChatCompletionRequest,
 	messages []*genai.Content,
 ) (<-chan string, error) {
-	modelName := g.model
-	if !strings.HasPrefix(modelName, "models/") {
-		modelName = "models/" + modelName
+	// Remove 'models/' prefix if present
+	modelName := strings.TrimPrefix(g.model, "models/")
+
+	conf := getGenaiContentConfigByOpenaiRequest(req)
+	chat, err := g.client.Chats.Create(ctx, modelName, &conf, messages)
+	if err != nil {
+		return nil, errors.Wrap(err, "genai create chat error")
 	}
-	model := g.client.GenerativeModel(modelName)
-	setGenaiModelByOpenaiRequest(model, req)
 
-	cs := model.StartChat()
-	setGenaiChatHistory(cs, messages)
-
-	iter := cs.SendMessageStream(ctx, messages[len(messages)-1].Parts...)
+	parts := []genai.Part{}
+	if len(messages) > 0 {
+		for _, p := range messages[len(messages)-1].Parts {
+			parts = append(parts, *p)
+		}
+	}
+	it := chat.SendMessageStream(ctx, parts...)
 
 	dataChan := make(chan string)
-	go handleStreamIter(g.model, iter, dataChan, req.StreamOptions.IncludeUsage)
+	go handleStreamIter(g.model, it, dataChan, req.StreamOptions.IncludeUsage)
 
 	return dataChan, nil
 }
 
-func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator, dataChan chan string, sendUsage bool) {
+func handleStreamIter(model string, it iter.Seq2[*genai.GenerateContentResponse, error], dataChan chan string, sendUsage bool) {
 	defer close(dataChan)
 
 	respID := util.GetUUID()
@@ -157,7 +166,7 @@ func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator,
 		dataChan <- string(resp)
 	}
 
-	sendUsageMetadata := func(usage *genai.UsageMetadata) {
+	sendUsageMetadata := func(usage *genai.GenerateContentResponseUsageMetadata) {
 		if usage == nil || !sendUsage {
 			return
 		}
@@ -177,22 +186,9 @@ func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator,
 		dataChan <- string(resp)
 	}
 
-	var usageMetadata *genai.UsageMetadata
+	var usageMetadata *genai.GenerateContentResponseUsageMetadata
 
-	for {
-		genaiResp, err := iter.Next()
-		if err == iterator.Done {
-			// Send any remaining text when done - all at once
-			if len(textBuffer) > 0 {
-				// Send all remaining text at once when done
-				sendFullText(textBuffer)
-			}
-			// per https://community.openai.com/t/usage-stats-now-available-when-using-streaming-with-the-chat-completions-api-or-completions-api/738156
-			// the usage is sent after everything else
-			sendUsageMetadata(usageMetadata)
-			break
-		}
-
+	for genaiResp, err := range it {
 		if err != nil {
 			log.Printf("genai get stream message error %v\n", err)
 
@@ -246,9 +242,8 @@ func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator,
 			isLastMessage := candidate.FinishReason > genai.FinishReasonStop
 
 			for _, part := range candidate.Content.Parts {
-				switch pp := part.(type) {
-				case genai.Text:
-					text := string(pp)
+				if part.Text != "" {
+					text := part.Text
 					if isLastMessage {
 						// If this is the last message, collect the text in buffer
 						textBuffer += text
@@ -272,7 +267,7 @@ func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator,
 						// For subsequent chunks after sentenceLength, send the entire text at once
 						sendFullText(text)
 					}
-				case genai.FunctionCall:
+				} else if part.FunctionCall != nil {
 					// Handle function calls as before
 					openaiResp := genaiResponseToStreamCompletionResponse(model, genaiResp, respID, created)
 					resp, _ := json.Marshal(openaiResp)
@@ -319,6 +314,15 @@ func handleStreamIter(model string, iter *genai.GenerateContentResponseIterator,
 			break
 		}
 	}
+
+	// Send any remaining text when done - all at once
+	if len(textBuffer) > 0 {
+		// Send all remaining text at once when done
+		sendFullText(textBuffer)
+	}
+	// per https://community.openai.com/t/usage-stats-now-available-when-using-streaming-with-the-chat-completions-api-or-completions-api/738156
+	// the usage is sent after everything else
+	sendUsageMetadata(usageMetadata)
 }
 
 func genaiResponseToStreamCompletionResponse(
@@ -342,27 +346,26 @@ func genaiResponseToStreamCompletionResponse(
 		parts := candidate.Content.Parts
 		for _, part := range parts {
 			index := count
-			switch pp := part.(type) {
-			case genai.Text:
+			if part.Text != "" {
 				choice := CompletionChoice{
 					Index: index,
 				}
-				choice.Delta.Content = string(pp)
+				choice.Delta.Content = part.Text
 
 				if candidate.FinishReason > genai.FinishReasonStop {
-					log.Printf("genai message finish reason %s\n", candidate.FinishReason.String())
+					log.Printf("genai message finish reason %s\n", candidate.FinishReason)
 					openaiFinishReason := string(convertFinishReason(candidate.FinishReason))
 					choice.FinishReason = &openaiFinishReason
 				}
 
 				resp.Choices = append(resp.Choices, choice)
-			case genai.FunctionCall:
-				args, _ := json.Marshal(pp.Args)
+			} else if part.FunctionCall == nil {
+				args, _ := json.Marshal(part.FunctionCall.Args)
 				toolCalls = append(toolCalls, openai.ToolCall{
 					Index:    genai.Ptr(int(index)),
-					ID:       fmt.Sprintf("%s-%d", pp.Name, index),
+					ID:       fmt.Sprintf("%s-%d", part.FunctionCall.Name, index),
 					Type:     openai.ToolTypeFunction,
-					Function: openai.FunctionCall{Name: pp.Name, Arguments: string(args)},
+					Function: openai.FunctionCall{Name: part.FunctionCall.Name, Arguments: string(args)},
 				})
 			}
 			count++
@@ -413,16 +416,15 @@ func genaiResponseToOpenaiResponse(
 
 		if candidate.Content != nil && len(candidate.Content.Parts) > 0 {
 			for j, part := range candidate.Content.Parts {
-				switch pp := part.(type) {
-				case genai.Text:
-					content = string(pp)
-				case genai.FunctionCall:
-					args, _ := json.Marshal(pp.Args)
+				if part.Text != "" {
+					content = part.Text
+				} else if part.FunctionCall != nil {
+					args, _ := json.Marshal(part.FunctionCall.Args)
 					toolCalls = append(toolCalls, openai.ToolCall{
 						Index:    genai.Ptr(j),
-						ID:       fmt.Sprintf("%s-%d", pp.Name, j),
+						ID:       fmt.Sprintf("%s-%d", part.FunctionCall.Name, j),
 						Type:     openai.ToolTypeFunction,
-						Function: openai.FunctionCall{Name: pp.Name, Arguments: string(args)},
+						Function: openai.FunctionCall{Name: part.FunctionCall.Name, Arguments: string(args)},
 					})
 				}
 			}
@@ -462,107 +464,90 @@ func convertFinishReason(reason genai.FinishReason) openai.FinishReason {
 	return openaiFinishReason
 }
 
-func setGenaiChatHistory(cs *genai.ChatSession, messages []*genai.Content) {
-	cs.History = make([]*genai.Content, 0, len(messages))
-	if len(messages) > 1 {
-		cs.History = append(cs.History, messages[:len(messages)-1]...)
-	}
+func getGenaiContentConfigByOpenaiRequest(req *ChatCompletionRequest) genai.GenerateContentConfig {
+	config := genai.GenerateContentConfig{}
 
-	if len(cs.History) != 0 && cs.History[len(cs.History)-1].Role != genaiRoleModel {
-		cs.History = append(cs.History, &genai.Content{
-			Parts: []genai.Part{
-				genai.Text(""),
-			},
-			Role: genaiRoleModel,
-		})
-	}
-}
-
-func setGenaiModelByOpenaiRequest(model *genai.GenerativeModel, req *ChatCompletionRequest) {
 	if req.MaxTokens != 0 {
-		model.MaxOutputTokens = &req.MaxTokens
+		config.MaxOutputTokens = req.MaxTokens
 	}
 	if req.Temperature != 0 {
-		model.Temperature = &req.Temperature
+		config.Temperature = &req.Temperature
 	}
 	if req.TopP != 0 {
-		model.TopP = &req.TopP
+		config.TopP = &req.TopP
 	}
 	if len(req.Stop) != 0 {
-		model.StopSequences = req.Stop
+		config.StopSequences = req.Stop
 	}
 
 	// Set response format if specified
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json" {
-		model.ResponseMIMEType = "application/json"
+		config.ResponseMIMEType = "application/json"
 	}
 
 	// Configure tools if provided
 	if len(req.Tools) > 0 {
 		tools := convertOpenAIToolsToGenAI(req.Tools)
-		model.Tools = tools
+		config.Tools = tools
 
 		// Configure tool choice/function calling mode
-		model.ToolConfig = &genai.ToolConfig{
+		config.ToolConfig = &genai.ToolConfig{
 			FunctionCallingConfig: &genai.FunctionCallingConfig{},
 		}
 
 		switch v := req.ToolChoice.(type) {
 		case string:
 			if v == "none" {
-				model.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingNone
+				config.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingConfigModeNone
 			} else if v == "auto" {
-				model.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingAuto
+				config.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingConfigModeAuto
 			}
 		case map[string]interface{}:
 			if funcObj, ok := v["function"]; ok {
 				if funcMap, ok := funcObj.(map[string]interface{}); ok {
 					if name, ok := funcMap["name"].(string); ok {
-						model.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingAny
-						model.ToolConfig.FunctionCallingConfig.AllowedFunctionNames = []string{name}
+						config.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingConfigModeAny
+						config.ToolConfig.FunctionCallingConfig.AllowedFunctionNames = []string{name}
 					}
 				}
 			}
 		}
 	}
 
-	model.SafetySettings = []*genai.SafetySetting{
+	config.SafetySettings = []*genai.SafetySetting{
 		{
 			Category:  genai.HarmCategoryHarassment,
-			Threshold: genai.HarmBlockNone,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategoryHateSpeech,
-			Threshold: genai.HarmBlockNone,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategorySexuallyExplicit,
-			Threshold: genai.HarmBlockNone,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
 			Category:  genai.HarmCategoryDangerousContent,
-			Threshold: genai.HarmBlockNone,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 	}
+	return config
 }
 
 func (g *GeminiAdapter) GenerateEmbedding(
 	ctx context.Context,
 	messages []*genai.Content,
 ) (*openai.EmbeddingResponse, error) {
-	// Add 'models/' prefix if not already present
-	modelName := g.model
-	if !strings.HasPrefix(modelName, "models/") {
-		modelName = "models/" + modelName
-	}
-	model := g.client.EmbeddingModel(modelName)
+	// Remove 'models/' prefix if present
+	modelName := strings.TrimPrefix(g.model, "models/")
 
-	batchEmbeddings := model.NewBatch()
+	batchEmbeddings := []*genai.Content{}
 	for _, message := range messages {
-		batchEmbeddings = batchEmbeddings.AddContent(message.Parts...)
+		batchEmbeddings = append(batchEmbeddings, message)
 	}
 
-	genaiResp, err := model.BatchEmbedContents(ctx, batchEmbeddings)
+	genaiResp, err := g.client.Models.EmbedContent(ctx, modelName, batchEmbeddings, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "genai generate embeddings error")
 	}

@@ -2,15 +2,14 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/google/generative-ai-go/genai"
 	openai "github.com/sashabaranov/go-openai"
-	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
 )
 
 const (
@@ -32,26 +31,33 @@ var USE_MODEL_MAPPING bool = os.Getenv("DISABLE_MODEL_MAPPING") != "1"
 
 // FetchGeminiModels fetches available models from Gemini API
 func FetchGeminiModels(ctx context.Context, apiKey string) ([]string, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: apiKey,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
 
 	models := []string{}
-	iter := client.ListModels(ctx)
+	page, err := client.Models.List(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	for {
-		m, err := iter.Next()
-		if err == iterator.Done {
+		for _, m := range page.Items {
+			// Strip the 'models/' prefix from model names
+			modelName := m.Name
+			modelName = strings.TrimPrefix(modelName, "models/")
+			models = append(models, modelName)
+		}
+
+		page, err = page.Next(ctx)
+		if errors.Is(err, genai.ErrPageDone) {
 			break
 		}
 		if err != nil {
 			return nil, err
 		}
-		// Strip the 'models/' prefix from model names
-		modelName := m.Name
-		modelName = strings.TrimPrefix(modelName, "models/")
-		models = append(models, modelName)
 	}
 
 	return models, nil

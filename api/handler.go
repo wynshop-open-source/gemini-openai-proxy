@@ -2,16 +2,16 @@ package api
 
 import (
 	"fmt"
+	"google.golang.org/genai"
 	"io"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/generative-ai-go/genai"
+
 	"github.com/pkg/errors"
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/api/option"
 
 	"github.com/zhu327/gemini-openai-proxy/pkg/adapter"
 )
@@ -159,7 +159,9 @@ func ChatProxyHandler(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(openaiAPIKey))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: openaiAPIKey,
+	})
 	if err != nil {
 		log.Printf("new genai client error %v\n", err)
 		c.JSON(http.StatusBadRequest, openai.APIError{
@@ -168,7 +170,6 @@ func ChatProxyHandler(c *gin.Context) {
 		})
 		return
 	}
-	defer client.Close()
 
 	model := req.ToGenaiModel()
 	gemini := adapter.NewGeminiAdapter(client, model)
@@ -289,7 +290,7 @@ func EmbeddingProxyHandler(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(openaiAPIKey))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: openaiAPIKey})
 	if err != nil {
 		log.Printf("new genai client error %v\n", err)
 		c.JSON(http.StatusBadRequest, openai.APIError{
@@ -298,7 +299,6 @@ func EmbeddingProxyHandler(c *gin.Context) {
 		})
 		return
 	}
-	defer client.Close()
 
 	model := req.ToGenaiModel()
 	gemini := adapter.NewGeminiAdapter(client, model)
