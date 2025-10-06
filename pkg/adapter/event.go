@@ -17,7 +17,7 @@ type stringWrapper struct {
 }
 
 func (w stringWrapper) writeString(str string) (int, error) {
-	return w.Writer.Write([]byte(str))
+	return w.Write([]byte(str))
 }
 
 func checkWriter(writer io.Writer) stringWriter {

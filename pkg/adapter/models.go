@@ -147,14 +147,14 @@ func GetMappedModel(geminiModelName string) string {
 	if !USE_MODEL_MAPPING {
 		return geminiModelName
 	}
-	switch {
-	case geminiModelName == Gemini1Dot5Pro:
+	switch geminiModelName {
+	case Gemini1Dot5Pro:
 		return openai.GPT4TurboPreview
-	case geminiModelName == Gemini1Dot5Flash:
+	case Gemini1Dot5Flash:
 		return openai.GPT4
-	case geminiModelName == Gemini2FlashExp:
+	case Gemini2FlashExp:
 		return openai.GPT4o
-	case geminiModelName == TextEmbedding004:
+	case TextEmbedding004:
 		return string(openai.AdaEmbeddingV2)
 	default:
 		return openai.GPT3Dot5Turbo
@@ -187,8 +187,8 @@ func (req *ChatCompletionRequest) ToGenaiModel() string {
 }
 
 func (req *ChatCompletionRequest) ParseModelWithoutMapping() string {
-	switch {
-	case req.Model == Gemini1Dot5ProV:
+	switch req.Model {
+	case Gemini1Dot5ProV:
 		if os.Getenv("GPT_4_VISION_PREVIEW") == Gemini1Dot5Pro {
 			return Gemini1Dot5Pro
 		}
@@ -207,8 +207,8 @@ func (req *ChatCompletionRequest) ParseModelWithoutMapping() string {
 }
 
 func (req *ChatCompletionRequest) ParseModelWithMapping() string {
-	switch {
-	case req.Model == openai.GPT4VisionPreview:
+	switch req.Model {
+	case openai.GPT4VisionPreview:
 		if os.Getenv("GPT_4_VISION_PREVIEW") == Gemini1Dot5Pro {
 			return Gemini1Dot5Pro
 		}

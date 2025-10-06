@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -61,7 +62,12 @@ func getImageInfoFromURL(url string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	defer response.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalf("Error closing response body: %v", err)
+		}
+	}(response.Body)
 
 	// Read the response body
 	imageData, err := io.ReadAll(response.Body)

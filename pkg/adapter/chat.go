@@ -495,9 +495,10 @@ func getGenaiContentConfigByOpenaiRequest(req *ChatCompletionRequest) genai.Gene
 
 		switch v := req.ToolChoice.(type) {
 		case string:
-			if v == "none" {
+			switch v {
+			case "none":
 				config.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingConfigModeNone
-			} else if v == "auto" {
+			case "auto":
 				config.ToolConfig.FunctionCallingConfig.Mode = genai.FunctionCallingConfigModeAuto
 			}
 		case map[string]interface{}:
@@ -540,12 +541,7 @@ func (g *GeminiAdapter) GenerateEmbedding(
 	// Remove 'models/' prefix if present
 	modelName := strings.TrimPrefix(g.model, "models/")
 
-	batchEmbeddings := []*genai.Content{}
-	for _, message := range messages {
-		batchEmbeddings = append(batchEmbeddings, message)
-	}
-
-	genaiResp, err := g.client.Models.EmbedContent(ctx, modelName, batchEmbeddings, nil)
+	genaiResp, err := g.client.Models.EmbedContent(ctx, modelName, messages, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "genai generate embeddings error")
 	}

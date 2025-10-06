@@ -8,6 +8,6 @@ import (
 
 func GetUUID() string {
 	code := uuid.New().String()
-	code = strings.Replace(code, "-", "", -1)
+	code = strings.ReplaceAll(code, "-", "")
 	return code
 }
