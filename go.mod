@@ -1,6 +1,6 @@
 module github.com/zhu327/gemini-openai-proxy
 
-go 1.21.1
+go 1.23.0
 
 require (
 	github.com/gin-contrib/cors v1.7.1
@@ -55,7 +55,7 @@ require (
 	golang.org/x/arch v0.7.0 // indirect
 	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
-	golang.org/x/oauth2 v0.21.0 // indirect
+	golang.org/x/oauth2 v0.27.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
